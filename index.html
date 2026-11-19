@@ -67,13 +67,14 @@ async function readOrigin() {
   return found.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')))[0];
 }
 
+const MAX_TRIES = 18;
 let tries = 0;
-function later(title, detail) {
-  // 막 다시 열린 직후는 정보가 늦게 바뀐다 → 1분 동안 10초마다 저절로 다시 확인
-  if (tries < 6) {
+function later(title, detail, wait = 10) {
+  // PC가 막 켜졌거나 사이트를 다시 켜는 중이면 정보가 늦게 바뀐다 → 3분 가까이 저절로 다시 확인
+  if (tries < MAX_TRIES) {
     tries += 1;
-    show(title, `${detail} 10초 뒤 다시 확인합니다(${tries}/6).`, true);
-    setTimeout(go, 10000);
+    show(title, `${detail} ${wait}초 뒤 다시 확인합니다(${tries}/${MAX_TRIES}).`, true);
+    setTimeout(go, wait * 1000);
   } else {
     show(title, detail, true);
   }
@@ -104,22 +105,25 @@ async function go() {
   try {
     info = await readOrigin();
   } catch (e) {
-    later('주소 정보를 읽지 못했습니다', '');
+    later('연결 정보를 읽지 못했습니다', '폰의 인터넷 연결을 확인해 주세요.');
     return;
   }
   const when = info.updated ? `마지막 연결 ${String(info.updated).slice(0, 16)}.` : '';
   if (!info.origin || info.status !== 'open') {
-    later('지금은 닫혀 있습니다', `${when} PC가 켜지면 1~2분 안에 다시 열립니다.`);
+    later('PC 쪽 연결이 꺼져 있습니다', `${when} PC가 켜지면 1~2분 안에 저절로 열립니다.`);
     return;
   }
   const base = info.origin.replace(/\/+$/, '');
   const state = await alive(base);
   if (!state) {
-    later('PC가 꺼져 있거나 연결이 끊겼습니다', `${when} 끊기면 1분 안에 새로 연결됩니다.`);
+    later('PC에 연결되지 않습니다', `${when} PC가 꺼졌거나 연결을 새로 잇는 중입니다(새로 잇는 중이면 1분 안에 열립니다).`);
     return;
   }
   if (!state.hub) {
-    later('캐릭터 사이트가 꺼져 있습니다', 'PC에서 사이트(8330)를 켜면 바로 열립니다.');
+    // 상시 모드의 PC는 사이트가 꺼지면 15초 뒤 스스로 다시 켠다
+    if (state.starting && (state.fails || 0) < 3) later('사이트를 켜는 중입니다', '잠시 뒤 저절로 열립니다.', 5);
+    else if (state.starting) later('사이트가 켜지지 않습니다', 'PC가 계속 다시 켜 보는 중입니다.');
+    else later('사이트가 꺼져 있습니다', 'PC에서 사이트를 켜면 바로 열립니다.');
     return;
   }
   location.replace(`${base}/?k=${encodeURIComponent(key)}#/${page}`);
