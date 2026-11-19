@@ -46,15 +46,37 @@ function show(title, detail, canRetry) {
   retry.hidden = !canRetry;
 }
 
-async function readOrigin() {
+async function readJson(url, opts) {
   try {
-    const r = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/origin.json?t=${Date.now()}`,
-                          { headers: { Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
-    if (r.ok) return await r.json();
-  } catch (e) { /* 아래 사본으로 */ }
-  const r = await fetch(`./origin.json?t=${Date.now()}`, { cache: 'no-store' });
-  if (!r.ok) throw new Error('origin');
-  return await r.json();
+    const r = await fetch(url, { cache: 'no-store', ...opts });
+    return r.ok ? await r.json() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 깃허브 API 와 페이지 사본 둘 다 읽어 더 최근(updated) 것을 쓴다. 둘 다 1분쯤 늦을 수 있다.
+async function readOrigin() {
+  const t = Date.now();
+  const found = (await Promise.all([
+    readJson(`https://api.github.com/repos/${OWNER}/${REPO}/contents/origin.json?t=${t}`,
+             { headers: { Accept: 'application/vnd.github.raw+json' } }),
+    readJson(`./origin.json?t=${t}`),
+  ])).filter(Boolean);
+  if (!found.length) throw new Error('origin');
+  return found.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')))[0];
+}
+
+let tries = 0;
+function later(title, detail) {
+  // 막 다시 열린 직후는 정보가 늦게 바뀐다 → 1분 동안 10초마다 저절로 다시 확인
+  if (tries < 6) {
+    tries += 1;
+    show(title, `${detail} 10초 뒤 다시 확인합니다(${tries}/6).`, true);
+    setTimeout(go, 10000);
+  } else {
+    show(title, detail, true);
+  }
 }
 
 async function alive(base) {
@@ -82,28 +104,28 @@ async function go() {
   try {
     info = await readOrigin();
   } catch (e) {
-    show('주소 정보를 읽지 못했습니다', '잠시 뒤 다시 시도해 주세요.', true);
+    later('주소 정보를 읽지 못했습니다', '');
     return;
   }
-  const when = info.updated ? `마지막 연결 ${info.updated}` : '';
+  const when = info.updated ? `마지막 연결 ${String(info.updated).slice(0, 16)}.` : '';
   if (!info.origin || info.status !== 'open') {
-    show('지금은 닫혀 있습니다', when, true);
+    later('지금은 닫혀 있습니다', `${when} PC가 켜지면 1~2분 안에 다시 열립니다.`);
     return;
   }
   const base = info.origin.replace(/\/+$/, '');
   const state = await alive(base);
   if (!state) {
-    show('PC가 꺼져 있거나 연결이 끊겼습니다', `${when}. PC가 켜지면 1~2분 안에 다시 열립니다.`, true);
+    later('PC가 꺼져 있거나 연결이 끊겼습니다', `${when} 끊기면 1분 안에 새로 연결됩니다.`);
     return;
   }
   if (!state.hub) {
-    show('캐릭터 사이트가 꺼져 있습니다', 'PC에서 사이트(8330)를 켜면 바로 열립니다.', true);
+    later('캐릭터 사이트가 꺼져 있습니다', 'PC에서 사이트(8330)를 켜면 바로 열립니다.');
     return;
   }
   location.replace(`${base}/?k=${encodeURIComponent(key)}#/${page}`);
 }
 
-retry.addEventListener('click', go);
+retry.addEventListener('click', () => { tries = 0; go(); });
 go();
 </script>
 </body>
